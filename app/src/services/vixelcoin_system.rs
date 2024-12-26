@@ -1,4 +1,8 @@
-use sails_rs::{ prelude::*, collections::HashMap, gstd::{exec, msg} };
+use sails_rs::{
+    prelude::*, 
+    collections::HashMap, 
+    gstd::{exec, msg}
+};
 
 const DECIMALS: u128 = 1_000_000_000_000_000_000;
 const VALUE_OF_VIXELCOIN: u128 = 1000; // Suponiendo, por ejemplo, que un vara equivale a 1000 vixelcoins
@@ -48,7 +52,7 @@ impl VixelcoinSystemService {
         // Crea el registro en el Estado
         self.acount_users.insert(id_actor, DataAcountUser{user_name, vixel_coins_amount: 0 });
 
-        "User created with the Actor Id {ActorId}".to_string();
+        format!("Se creó el usuario {} con el ID {}", user_name, id_actor);
         Ok(())
     }
 
@@ -70,7 +74,7 @@ impl VixelcoinSystemService {
 
         // msg::send(program, payload, value);
         
-        "{amunt_of_vixelcoins} Vixelcoins para el usuario {id_actor}".to_string();
+        format!("El usuario {} compró {} Vixelcoins, su saldo actual es de {} Vixelcoins", user.user_name, amount_of_vixelcoins, user.vixel_coins_amount + amount_of_vixelcoins);
         Ok(())
     }
 
@@ -100,16 +104,18 @@ impl VixelcoinSystemService {
         msg::send(id_actor, payload, amount_of_varas).expect("Error al realizar la transacción");
         
         "{amount_of_varas} Tokens de Vara comprados por {id_actor}".to_string();
+        format!("El usuario {} ha comprado {} Varas, ahora cuenta con {} Vixecoins", user.user_name, amount_of_varas, user.vixel_coins_amount - amount_of_vixelcoins);
         Ok(())
     }
 
-    /* 
-    pub fn see_vixelcoins(& self, id_actor: ActorId) -> Result<DataAcountUser, &'static str>{
-        let user = self.acount_users.get(&id_actor).ok_or("No se encontró información del usuario")?;
-        event!("InfoAcountSend", { "address": id_actor, "name": user.user_name, "vixelcoins": user.vixel_coins_amount });
-        Ok(user)
+    pub fn see_vixelcoins(& self, id_actor: ActorId) -> Result<(), &'static str>{
+        let user = self.acount_users.get(&id_actor).ok_or("No se econtró el usuario con ese id")?;
+        let user_name = user.user_name.clone();
+        let vixelcoins = user.vixel_coins_amount.to_string();
+        let actor_id = id_actor.to_string();
+        format!("ID: {}, Name: {}, Vixelcoins: {}", actor_id, user_name, vixelcoins);
+        Ok(())
     }
-    */
 
     fn varas_to_vixelcoins(varas: u128) -> u128 {
         varas * VALUE_OF_VIXELCOIN
