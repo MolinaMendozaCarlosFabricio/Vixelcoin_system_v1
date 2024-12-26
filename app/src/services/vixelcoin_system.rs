@@ -48,9 +48,10 @@ impl VixelcoinSystemService {
         if user_name.is_empty() {
             return Err("Campos faltantes");
         }
-
+        
+        let username: String = user_name.clone();
         // Crea el registro en el Estado
-        self.acount_users.insert(id_actor, DataAcountUser{user_name, vixel_coins_amount: 0 });
+        self.acount_users.insert(id_actor, DataAcountUser{user_name: username, vixel_coins_amount: 0 });
 
         format!("Se creó el usuario {} con el ID {}", user_name, id_actor);
         Ok(())
@@ -69,12 +70,15 @@ impl VixelcoinSystemService {
         let amount_of_vixelcoins = Self::varas_to_vixelcoins(amount_of_varas);
         // Busca el usuario por medio del id Actor
         let user = self.acount_users.get(&id_actor).ok_or("El usuario no está registrado en el contrato")?;
+        let name: String = user.user_name.clone();
+        let vixelcoin_amount = amount_of_vixelcoins;
+        let total_vixelcoin = user.vixel_coins_amount + vixelcoin_amount;
         // Actualiza el registro con el usuario
         self.acount_users.insert(id_actor, DataAcountUser{ user_name: user.user_name.clone(), vixel_coins_amount: user.vixel_coins_amount + amount_of_vixelcoins});
 
         // msg::send(program, payload, value);
         
-        format!("El usuario {} compró {} Vixelcoins, su saldo actual es de {} Vixelcoins", user.user_name, amount_of_vixelcoins, user.vixel_coins_amount + amount_of_vixelcoins);
+        format!("El usuario {} compró {} Vixelcoins, su saldo actual es de {} Vixelcoins", name, vixelcoin_amount, total_vixelcoin);
         Ok(())
     }
 
@@ -90,7 +94,9 @@ impl VixelcoinSystemService {
 
         // Obtiene un usuario por su id
         let user = self.acount_users.get(&id_actor).ok_or("No se ha registrado el usuario en el contrato")?;
-
+        let name: String = user.user_name.clone();
+        let vixelcoin_amount = amount_of_vixelcoins;
+        let total_vixelcoin = user.vixel_coins_amount - vixelcoin_amount;
         // Comprueba que el usuario contenga los suficientes vixelcoins
         if user.vixel_coins_amount < amount_of_vixelcoins {
             return Err("El usuario no cuenta con suficientes Vixelcoins para el cambio");
@@ -104,7 +110,7 @@ impl VixelcoinSystemService {
         msg::send(id_actor, payload, amount_of_varas).expect("Error al realizar la transacción");
         
         "{amount_of_varas} Tokens de Vara comprados por {id_actor}".to_string();
-        format!("El usuario {} ha comprado {} Varas, ahora cuenta con {} Vixecoins", user.user_name, amount_of_varas, user.vixel_coins_amount - amount_of_vixelcoins);
+        format!("El usuario {} ha comprado {} Varas, ahora cuenta con {} Vixecoins", name, vixelcoin_amount, total_vixelcoin);
         Ok(())
     }
 
