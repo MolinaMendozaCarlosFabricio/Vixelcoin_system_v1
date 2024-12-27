@@ -30,20 +30,9 @@ impl VixelcoinSystemService {
         }
     }
 
-    // Métodos de prueba
-    // Service's method (command)
-    pub fn do_something(&mut self) -> String {
-        "Hello from VixelcoinSystem!".to_string()
-    }
-
-    // Service's query
-    pub fn get_something(&self) -> String {
-        "Hello from VixelcoinSystem!".to_string()
-    }
-
-    // Los meros métodos
     // Método para registrar cuenta del usuario en el contrato
-    pub fn register_user(&mut self, id_actor: ActorId, user_name: String) -> Result<(), &'static str>{
+    pub fn register_user(&mut self, user_name: String) -> Result<String, &'static str>{
+        let id_actor = msg::source();
         // Comprueba que los campos estén completos
         if user_name.is_empty() {
             return Err("Campos faltantes");
@@ -53,37 +42,47 @@ impl VixelcoinSystemService {
         // Crea el registro en el Estado
         self.acount_users.insert(id_actor, DataAcountUser{user_name: username, vixel_coins_amount: 0 });
 
-        format!("Se creó el usuario {} con el ID {}", user_name, id_actor);
-        Ok(())
+        let user = self.acount_users.get(&id_actor).ok_or("Usuario no encontrado (¿Cómo es eso posible)")?;
+
+        Ok(format!("Se creó el usuario {} con el ID {}", user.user_name, id_actor))
     }
 
     // Método para cambiar varas por vixelcoin
     // #[payable]
-    pub fn buy_vixelcoins(&mut self, id_actor: ActorId, amount: u128) -> Result<(), &'static str>{
-        // Comprueba que el monto sea un valir válido
-        if amount <= 0 {
+    pub fn buy_vixelcoins(&mut self) -> Result<String, &'static str>{
+        // Obtiene información del mensaje
+        let amount_varas = msg::value();
+        let id_actor = msg::source();
+
+        // Comprueba que el monto sea un valor válido
+        if amount_varas <= 0 {
             return Err("La cantidad debe ser mayor a cero");
         }
         // Obtiene directamente la cantidad de varas ingresado
-        let amount_of_varas = (amount as u128) / DECIMALS;
+        let amount_of_varas = (amount_varas as u128) / DECIMALS;
         // Calcula su equivalencia en vixelcoin
         let amount_of_vixelcoins = Self::varas_to_vixelcoins(amount_of_varas);
         // Busca el usuario por medio del id Actor
-        let user = self.acount_users.get(&id_actor).ok_or("El usuario no está registrado en el contrato")?;
-        let name: String = user.user_name.clone();
-        let vixelcoin_amount = amount_of_vixelcoins;
-        let total_vixelcoin = user.vixel_coins_amount + vixelcoin_amount;
-        // Actualiza el registro con el usuario
-        self.acount_users.insert(id_actor, DataAcountUser{ user_name: user.user_name.clone(), vixel_coins_amount: user.vixel_coins_amount + amount_of_vixelcoins});
+        if !self.acount_users.contains_key(&id_actor) {
+            return Err("El usuario no está registrado en el contrato");
+        }
 
-        // msg::send(program, payload, value);
+        self.acount_users.entry(id_actor).and_modify(
+            |user| {
+                user.vixel_coins_amount += amount_of_vixelcoins;
+            }
+        );
         
-        format!("El usuario {} compró {} Vixelcoins, su saldo actual es de {} Vixelcoins", name, vixelcoin_amount, total_vixelcoin);
-        Ok(())
+        let user = self.acount_users.get(&id_actor).ok_or("Usuario no encontrado")?;
+
+        Ok(format!("El usuario {} compró {} Vixelcoins, su saldo actual es de {} Vixelcoins",
+            user.user_name, amount_of_vixelcoins, user.vixel_coins_amount
+        ))
     }
 
     // Método para vender vixelcoins por varas
-    pub fn sell_vixelcoins(&mut self, id_actor: ActorId, amount_of_vixelcoins: u128) -> Result<(), &'static str>{
+    pub fn sell_vixelcoins(&mut self, amount_of_vixelcoins: u128) -> Result<String, &'static str>{
+        let id_actor = msg::source();
         // Lo pasa al formato del token de vara
         let amount_of_varas = Self::vixelcoins_to_varas(amount_of_vixelcoins) * DECIMALS;
         // Comprueba que el contrato tenga suficientes varas
@@ -92,35 +91,42 @@ impl VixelcoinSystemService {
             return Err("El contrato no tiene suficientes varas");
         }
 
+        if !self.acount_users.contains_key(&id_actor) {
+            return Err("El usuario no se encuentra registrado al contrato");
+        }
+
+        // Actualiza la cantidad de vixelcoins del usuario
+        self.acount_users.entry(id_actor).and_modify(
+            |user|{
+                user.vixel_coins_amount -= amount_of_vixelcoins;
+            }
+        );
+
         // Obtiene un usuario por su id
         let user = self.acount_users.get(&id_actor).ok_or("No se ha registrado el usuario en el contrato")?;
-        let name: String = user.user_name.clone();
-        let vixelcoin_amount = amount_of_vixelcoins;
-        let total_vixelcoin = user.vixel_coins_amount - vixelcoin_amount;
+        
         // Comprueba que el usuario contenga los suficientes vixelcoins
         if user.vixel_coins_amount < amount_of_vixelcoins {
             return Err("El usuario no cuenta con suficientes Vixelcoins para el cambio");
         }
 
-        // Actualiza la cantidad de vixelcoins del usuario
-        self.acount_users.insert(id_actor, DataAcountUser{ user_name: user.user_name.clone(), vixel_coins_amount: user.vixel_coins_amount - amount_of_vixelcoins});
-        
         // Transfiere los varas al usuario
         let payload = "El usuario {ActorId} hizo la compra de {amount_of_vixelcoins} Tokens de Vara";
         msg::send(id_actor, payload, amount_of_varas).expect("Error al realizar la transacción");
         
-        "{amount_of_varas} Tokens de Vara comprados por {id_actor}".to_string();
-        format!("El usuario {} ha comprado {} Varas, ahora cuenta con {} Vixecoins", name, vixelcoin_amount, total_vixelcoin);
-        Ok(())
+        
+        Ok(format!("El usuario {} ha comprado {} Varas, ahora cuenta con {} Vixecoins", 
+            user.user_name, amount_of_varas, user.vixel_coins_amount
+        ))
     }
 
-    pub fn see_vixelcoins(& self, id_actor: ActorId) -> Result<(), &'static str>{
-        let user = self.acount_users.get(&id_actor).ok_or("No se econtró el usuario con ese id")?;
-        let user_name = user.user_name.clone();
-        let vixelcoins = user.vixel_coins_amount.to_string();
-        let actor_id = id_actor.to_string();
-        format!("ID: {}, Name: {}, Vixelcoins: {}", actor_id, user_name, vixelcoins);
-        Ok(())
+    pub fn see_vixelcoins(& self) -> Result<String, &'static str>{
+        let actor_id = msg::source();
+        if !self.acount_users.contains_key(&actor_id) {
+            return Err("No se encontró el usuario");
+        }
+        let user = self.acount_users.get(&actor_id).ok_or("No se econtró el usuario con ese id")?;
+        Ok(format!("ID: {}, Name: {}, Vixelcoins: {}", actor_id, user.user_name, user.vixel_coins_amount))
     }
 
     fn varas_to_vixelcoins(varas: u128) -> u128 {
