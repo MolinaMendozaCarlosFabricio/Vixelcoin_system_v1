@@ -4,65 +4,78 @@ use sails_rs::{
     gstd::{exec, msg}
 };
 
+use crate::states::state::{
+    VixelCoinSystemState,
+    AcountInformation
+};
+
 const DECIMALS: u128 = 1_000_000_000_000_000_000;
 const VALUE_OF_VIXELCOIN: u128 = 1000; // Suponiendo, por ejemplo, que un vara equivale a 1000 vixelcoins
+static mut VIXELCOIN_SYSTEM_STATE: Option<VixelCoinSystemState> = None;
 
-
-#[derive(Default)]
-pub struct DataAcountUser{
-    pub user_name: String,
-    pub vixel_coins_amount: u128,
-}
 
 // Estado para el servicio de economía de vixel
 #[derive(Default)]
 pub struct VixelcoinSystemService{
-    acount_users: HashMap<ActorId, DataAcountUser>
+    
 }
 
 // Servicio para manejar la economía de vixel
 #[sails_rs::service]
 impl VixelcoinSystemService {
 
-    pub fn new() -> Self {
-        Self{
-            acount_users: HashMap::<ActorId, DataAcountUser>::new(),
+    pub fn seed(adress: ActorId, vixelcoins: u128){
+        unsafe {
+            VIXELCOIN_SYSTEM_STATE = Some(
+                VixelCoinSystemState {
+                    admins: vec![adress],
+                    amount_vixelcoins_total_in_the_system: Some(vixelcoins),
+                    users: HashMap::<ActorId, AcountInformation>::new()
+                }
+            )
         }
+    }
+
+    pub fn new() -> Self {
+        Self{}
     }
 
     // Método para registrar cuenta del usuario en el contrato
     pub fn register_user(&mut self, user_name: String) -> VixelcoinSystemEvents{
+        let state = self.state_mut();
         let id_actor = msg::source();
         // Comprueba que los campos estén completos
         if user_name.is_empty() {
-            // return Err("Campos faltantes");
             return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::WithoutSomeInputs);
+        }
+
+        if state.users.contains_key(&id_actor){
+            return VixelcoinSystemEvents::Error(
+                VixelCoinSystemErrors::UserExists
+            );
         }
         
         // Crea el registro en el Estado
-        // self.acount_users.insert(id_actor, DataAcountUser{user_name: username, vixel_coins_amount: 0 });
-        self.acount_users.entry(id_actor).insert(
-            DataAcountUser{user_name: user_name, vixel_coins_amount: 0}
+        state.users.entry(id_actor).insert(
+            AcountInformation{username: user_name, balance_vixelcoins: 0}
         );
 
-        let user = self.acount_users.get(&id_actor).unwrap();
+        let user = state.users.get(&id_actor).unwrap();
 
-        // Ok(format!("Se creó el usuario {} con el ID {}", user.user_name, id_actor))
         VixelcoinSystemEvents::UserRegistred { 
-            message: "Usuario registrado".to_string(), actor_id: id_actor, username: user.user_name.clone()
+            message: "Usuario registrado".to_string(), actor_id: id_actor, username: user.username.clone()
         }
     }
 
     // Método para cambiar varas por vixelcoin
-    // #[payable]
     pub fn buy_vixelcoins(&mut self) -> VixelcoinSystemEvents{
         // Obtiene información del mensaje
         let amount_varas = msg::value();
         let id_actor = msg::source();
+        let state = self.state_mut();
 
         // Comprueba que el monto sea un valor válido
-        if amount_varas <= 0 {
-            // return Err("La cantidad debe ser mayor a cero");
+        if amount_varas == 0 {
             return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::MustBeGreaterThan0);
         }
         // Obtiene directamente la cantidad de varas ingresado
@@ -70,91 +83,279 @@ impl VixelcoinSystemService {
         // Calcula su equivalencia en vixelcoin
         let amount_of_vixelcoins = Self::varas_to_vixelcoins(amount_of_varas);
         // Busca el usuario por medio del id Actor
-        if !self.acount_users.contains_key(&id_actor) {
-            // return Err("El usuario no está registrado en el contrato");
+        if !state.users.contains_key(&id_actor) {
             return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::UserNotFound);
         }
 
-        self.acount_users.entry(id_actor).and_modify(
+        if state.amount_vixelcoins_total_in_the_system.is_none() {
+            return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::StateNotInicializated);
+        }
+
+        if state.amount_vixelcoins_total_in_the_system < Some(amount_of_vixelcoins) {
+            return VixelcoinSystemEvents::Error(
+                VixelCoinSystemErrors::InsuficentBalanceOfVixelcoinsInTheContract
+            )
+        }
+
+        state.users.entry(id_actor).and_modify(
             |user| {
-                user.vixel_coins_amount += amount_of_vixelcoins;
+                user.balance_vixelcoins += amount_of_vixelcoins;
             }
         );
-        
-        let user = self.acount_users.get(&id_actor).unwrap();
 
-        /*
-        Ok(format!("El usuario {} compró {} Vixelcoins, su saldo actual es de {} Vixelcoins",
-            user.user_name, amount_of_vixelcoins, user.vixel_coins_amount
-        ))
-        */
+        // No sé si esto está haciendo efecto
+        state.amount_vixelcoins_total_in_the_system = Some(state.amount_vixelcoins_total_in_the_system
+            .unwrap()
+            .saturating_sub(amount_of_vixelcoins));
+        
+        let user = state.users.get(&id_actor).unwrap();
+
         VixelcoinSystemEvents::VixecoinsBought { 
             message: "Vixelcoins comprados".to_string(), 
-            actor_id: id_actor, username: user.user_name.clone(), vara_amount: amount_varas, 
-            vixelcoin_bought: amount_of_vixelcoins, total_vixelcoin: user.vixel_coins_amount 
+            actor_id: id_actor, username: user.username.clone(), vara_amount: amount_varas, 
+            vixelcoin_bought: amount_of_vixelcoins, total_vixelcoin: user.balance_vixelcoins
+        }
+    }
+
+    pub fn earn_award_of_vixelcoins(&mut self, amount_of_vixelcoins: u128) -> VixelcoinSystemEvents{
+        let id_actor = msg::source();
+        let state = self.state_mut();
+
+        if !state.users.contains_key(&id_actor) {
+            return VixelcoinSystemEvents::Error(
+                VixelCoinSystemErrors::UserNotFound
+            );
+        }
+
+        state.users.entry(id_actor).and_modify(
+            |user|{
+                user.balance_vixelcoins += amount_of_vixelcoins;
+            }
+        );
+
+        if state.amount_vixelcoins_total_in_the_system.is_none() {
+            return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::StateNotInicializated);
+        }
+
+        if state.amount_vixelcoins_total_in_the_system < Some(amount_of_vixelcoins) {
+            return VixelcoinSystemEvents::Error(
+                VixelCoinSystemErrors::InsuficentBalanceOfVixelcoinsInTheContract
+            )
+        }
+
+        state.amount_vixelcoins_total_in_the_system = Some(state.amount_vixelcoins_total_in_the_system
+            .unwrap()
+            .saturating_sub(amount_of_vixelcoins));
+
+        VixelcoinSystemEvents::VixelcoinsEarned { 
+            message: "Vixelcoins ganados".to_string(), 
+            actor_id: id_actor, vixelcoins_amount: amount_of_vixelcoins 
         }
     }
 
     // Método para vender vixelcoins por varas
     pub fn sell_vixelcoins(&mut self, amount_of_vixelcoins: u128) -> VixelcoinSystemEvents{
+        let state = self.state_mut();
         let id_actor = msg::source();
         // Lo pasa al formato del token de vara
         let amount_of_varas = Self::vixelcoins_to_varas(amount_of_vixelcoins) * DECIMALS;
         // Comprueba que el contrato tenga suficientes varas
-        let contract_balance = exec::gas_available();
-        if (contract_balance as u128) < amount_of_varas {
-            // return Err("El contrato no tiene suficientes varas");
-            return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::InsuficentBalanceInTheContract(contract_balance as u128));
+        if exec::value_available() < amount_of_varas {
+            return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::InsuficentBalanceInTheContract(exec::value_available()));
         }
 
-        if !self.acount_users.contains_key(&id_actor) {
-            // return Err("El usuario no se encuentra registrado al contrato");
+        if !state.users.contains_key(&id_actor) {
             return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::UserNotFound);
+        }
+
+        // Obtiene un usuario por su id
+        let user = state.users.get(&id_actor).unwrap();
+        let balance_vixelcoins = user.balance_vixelcoins;
+        let user_name = user.username.clone();
+        
+        // Comprueba que el usuario contenga los suficientes vixelcoins
+        if balance_vixelcoins < amount_of_vixelcoins {
+            // return Err("El usuario no cuenta con suficientes Vixelcoins para el cambio");
+            return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::InsuficentVixelcoins(balance_vixelcoins));
         }
 
         // Actualiza la cantidad de vixelcoins del usuario
-        self.acount_users.entry(id_actor).and_modify(
+        state.users.entry(id_actor).and_modify(
             |user|{
-                user.vixel_coins_amount -= amount_of_vixelcoins;
+                user.balance_vixelcoins -= amount_of_vixelcoins;
             }
         );
 
-        // Obtiene un usuario por su id
-        let user = self.acount_users.get(&id_actor).unwrap();
-        
-        // Comprueba que el usuario contenga los suficientes vixelcoins
-        if user.vixel_coins_amount < amount_of_vixelcoins {
-            // return Err("El usuario no cuenta con suficientes Vixelcoins para el cambio");
-            return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::InsuficentVixelcoins(user.vixel_coins_amount));
+        if state.amount_vixelcoins_total_in_the_system.is_none() {
+            return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::StateNotInicializated);
         }
 
+        // No sé si esto está haciendo efecto
+        state.amount_vixelcoins_total_in_the_system = Some(state.amount_vixelcoins_total_in_the_system
+            .unwrap()
+            .saturating_add(amount_of_vixelcoins));        
+
         // Transfiere los varas al usuario
-        let payload = "El usuario {ActorId} hizo la compra de {amount_of_vixelcoins} Tokens de Vara";
-        msg::send(id_actor, payload, amount_of_varas).expect("Error al realizar la transacción");
+        msg::send(
+            id_actor, 
+            "El usuario {ActorId} hizo la compra de {amount_of_vixelcoins} Tokens de Vara", 
+            amount_of_varas
+        )
+            .expect("Error al realizar la transacción");
         
-        /* 
-        Ok(format!("El usuario {} ha comprado {} Varas, ahora cuenta con {} Vixecoins", 
-            user.user_name, amount_of_varas, user.vixel_coins_amount
-        ))
-        */
         VixelcoinSystemEvents::VarasBought { 
-            message: "Vara Tokens bought".to_string(), actor_id: id_actor, username: user.user_name.clone(), 
+            message: "Vara Tokens bought".to_string(), actor_id: id_actor, username: user_name, 
             vixelcoin_amount: amount_of_vixelcoins, vara_bought: amount_of_varas, 
-            total_vixelcoin: user.vixel_coins_amount 
+            total_vixelcoin: balance_vixelcoins
         }
     }
 
-    pub fn see_vixelcoins(& self) -> VixelcoinSystemEvents{
-        let actor_id = msg::source();
-        if !self.acount_users.contains_key(&actor_id) {
+    pub fn spend_vixelcoins_in_the_system (&mut self, amount_of_vixelcoins: u128) -> VixelcoinSystemEvents {
+        let state = self.state_mut();
+        let id_actor = msg::source();
+
+        if !state.users.contains_key(&id_actor) {
+            return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::UserNotFound)
+        }
+
+        let user = state.users.get(&id_actor).unwrap();
+
+        if user.balance_vixelcoins < amount_of_vixelcoins {
+            return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::InsuficentVixelcoins(user.balance_vixelcoins));
+        }
+
+        state.users.entry(id_actor).and_modify(
+            |edit_user|{
+                edit_user.balance_vixelcoins -=amount_of_vixelcoins;
+            }
+        );
+
+        if state.amount_vixelcoins_total_in_the_system.is_none() {
+            return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::StateNotInicializated);
+        }
+
+        // No sé si esto está haciendo efecto
+        state.amount_vixelcoins_total_in_the_system = Some(state.amount_vixelcoins_total_in_the_system
+            .unwrap()
+            .saturating_add(amount_of_vixelcoins));
+
+        VixelcoinSystemEvents::VixelcoinsSpended(amount_of_vixelcoins)
+    }
+
+    pub fn transfer_vixelcoins(&mut self, amount_of_vixelcoins: u128, destinatary: ActorId ) -> VixelcoinSystemEvents{
+        let state = self.state_mut();
+        let id_actor = msg::source();
+
+        if !state.users.contains_key(&id_actor) || !state.users.contains_key(&destinatary) {
+            return VixelcoinSystemEvents::Error(
+                VixelCoinSystemErrors::UserNotFound
+            );
+        }
+
+        let user = state.users.get(&id_actor).unwrap();
+
+        if amount_of_vixelcoins == 0 {
+            return  VixelcoinSystemEvents::Error(
+                VixelCoinSystemErrors::MustBeGreaterThan0
+            );
+        }
+
+        if user.balance_vixelcoins < amount_of_vixelcoins {
+            return VixelcoinSystemEvents::Error(
+                VixelCoinSystemErrors::InsuficentVixelcoins(user.balance_vixelcoins)
+            );
+        }
+
+        state.users.entry(destinatary).and_modify(
+            |user_destinatary|{
+                user_destinatary.balance_vixelcoins += amount_of_vixelcoins;
+            }
+        );
+
+        state.users.entry(id_actor).and_modify(
+            |user_x|{
+                user_x.balance_vixelcoins -= amount_of_vixelcoins;
+            }
+        );
+
+        return VixelcoinSystemEvents::VarasTransfered { 
+            message: "Vixelcoins transferidos".to_string(), 
+            from: id_actor, to: destinatary, 
+            vixelcoin_amount: amount_of_vixelcoins 
+        }
+    }
+
+    pub fn see_vixelcoins_of_an_user(&self, adress: ActorId) -> VixelcoinSystemEvents{
+        let state = self.state_mut();
+        if !state.users.contains_key(&adress) {
             // return Err("No se encontró el usuario");
             return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::UserNotFound);
         }
-        let user = self.acount_users.get(&actor_id).unwrap();
+        let user = state.users.get(&adress).unwrap();
         // Ok(format!("ID: {}, Name: {}, Vixelcoins: {}", actor_id, user.user_name, user.vixel_coins_amount))
-        VixelcoinSystemEvents::SeeUser { actor_id: actor_id, username: user.user_name.clone(), 
-            total_vixelcoins: user.vixel_coins_amount
+        VixelcoinSystemEvents::SeeUser { actor_id: adress, username: user.username.clone(), 
+            total_vixelcoins: user.balance_vixelcoins
         }
+    }
+
+    pub fn see_vixelcoins_of_the_program(&self) -> VixelcoinSystemEvents{
+        let state = self.state_mut();
+
+        if !state.amount_vixelcoins_total_in_the_system.is_none(){
+            return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::StateNotInicializated);
+        }
+
+        VixelcoinSystemEvents::SeeBalanceOfTheProgram { 
+            vixelcoins: state.amount_vixelcoins_total_in_the_system.unwrap(), 
+            varas: exec::value_available() 
+        }
+    }
+
+    pub fn add_vixelcoins_to_the_contract (&mut self, amount_of_vixelcoins: u128) -> VixelcoinSystemEvents {
+        let state = self.state_mut();
+        let id_actor = msg::source();
+
+        if !state.users.contains_key(&id_actor) {
+            return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::UserNotFound);
+        }
+
+        if amount_of_vixelcoins == 0 {
+            return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::MustBeGreaterThan0);
+        }
+
+        if state.amount_vixelcoins_total_in_the_system.is_none() {
+            return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::StateNotInicializated);
+        }
+
+        // No sé si esto está haciendo efecto
+        state.amount_vixelcoins_total_in_the_system = Some(state.amount_vixelcoins_total_in_the_system
+            .unwrap()
+            .saturating_add(amount_of_vixelcoins));
+
+        VixelcoinSystemEvents::VixelcoinsAdded(amount_of_vixelcoins)
+    }
+
+    pub fn burn_vixelcoins_to_the_contract (&mut self, amount_of_vixelcoins: u128) -> VixelcoinSystemEvents{
+        let state = self.state_mut();
+        let id_actor = msg::source();
+
+        if !state.users.contains_key(&id_actor) {
+            return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::UserNotFound);
+        }
+
+        if amount_of_vixelcoins == 0 {
+            return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::MustBeGreaterThan0);
+        }
+
+        if state.amount_vixelcoins_total_in_the_system.is_none() {
+            return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::StateNotInicializated);
+        }
+
+        state.amount_vixelcoins_total_in_the_system = Some(state.amount_vixelcoins_total_in_the_system
+            .unwrap()
+            .saturating_sub(amount_of_vixelcoins));
+
+        VixelcoinSystemEvents::VixelcoinsBurned(amount_of_vixelcoins)
     }
 
     fn varas_to_vixelcoins(varas: u128) -> u128 {
@@ -163,6 +364,18 @@ impl VixelcoinSystemService {
     
     fn vixelcoins_to_varas(vixelcoins: u128) -> u128 {
         vixelcoins / VALUE_OF_VIXELCOIN
+    }
+
+    fn state_mut (&self) -> &'static mut VixelCoinSystemState {
+        let state = unsafe {VIXELCOIN_SYSTEM_STATE.as_mut()};
+        debug_assert!(state.is_none(), "El estado no ha sido inicializado");
+        unsafe { state.unwrap_unchecked() }
+    }
+
+    fn state_ref (&self) -> &'static VixelCoinSystemState {
+        let state = unsafe {VIXELCOIN_SYSTEM_STATE.as_ref()};
+        debug_assert!(state.is_none(), "El estado no ha sido inicializado");
+        unsafe { state.unwrap_unchecked() }
     }
 }
 
@@ -183,6 +396,11 @@ pub enum VixelcoinSystemEvents {
         vixelcoin_bought: u128,
         total_vixelcoin: u128
     },
+    VixelcoinsEarned{
+        message: String,
+        actor_id: ActorId,
+        vixelcoins_amount: u128
+    },
     VarasBought{
         message: String,
         actor_id: ActorId,
@@ -191,11 +409,24 @@ pub enum VixelcoinSystemEvents {
         vara_bought: u128,
         total_vixelcoin: u128
     },
+    VixelcoinsSpended(u128),
+    VarasTransfered{
+        message: String,
+        from: ActorId,
+        to: ActorId,
+        vixelcoin_amount: u128
+    },
     SeeUser{
         actor_id: ActorId,
         username: String,
         total_vixelcoins: u128
     },
+    SeeBalanceOfTheProgram{
+        vixelcoins: u128,
+        varas: u128,
+    },
+    VixelcoinsAdded(u128),
+    VixelcoinsBurned(u128),
     Error(VixelCoinSystemErrors)
 }
 
@@ -204,9 +435,12 @@ pub enum VixelcoinSystemEvents {
 #[scale_info(crate = sails_rs::scale_info)]
 pub enum VixelCoinSystemErrors {
     UserNotFound,
+    UserExists,
     WithoutSomeInputs,
     MustBeGreaterThan0,
     InsuficentBalanceInTheContract(u128),
+    InsuficentBalanceOfVixelcoinsInTheContract,
     InsuficentVixelcoins(u128),
     ErrorInTheTransaction,
+    StateNotInicializated
 }

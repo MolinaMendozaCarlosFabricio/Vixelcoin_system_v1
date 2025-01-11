@@ -1,6 +1,7 @@
 #![no_std]
 use sails_rs::prelude::*;
 pub mod services;
+pub mod states;
 use services::vixelcoin_system::VixelcoinSystemService;
 
 /* 
