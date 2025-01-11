@@ -1,8 +1,15 @@
 #![no_std]
-use sails_rs::prelude::*;
+use sails_rs::{
+    prelude::*,
+    gstd::msg
+};
 pub mod services;
 pub mod states;
-use services::vixelcoin_system::VixelcoinSystemService;
+use services::{
+    vixelcoin_system::VixelcoinSystemService,
+    cheems_scape_service::CheemsScapeService,
+    whalexpace_service::WhaleXPaceService
+};
 
 /* 
 use sails_rs::{ prelude::*, collections::HashMap, gstd::{exec, msg} };
@@ -134,7 +141,10 @@ pub struct VixelcoinSystemProgram(());
 #[sails_rs::program]
 impl VixelcoinSystemProgram {
     // Program's constructor
-    pub fn new() -> Self {
+    pub fn new(vixel_coins: u128) -> Self {
+        VixelcoinSystemService::seed(msg::source(), vixel_coins);
+        CheemsScapeService::seed();
+        WhaleXPaceService::seed();
         Self(())
     }
 
@@ -144,4 +154,13 @@ impl VixelcoinSystemProgram {
         VixelcoinSystemService::new()
     }
 
+    #[route("CheemsCapeServices")]
+    pub fn cheems_scape_service(&self) -> CheemsScapeService {
+        CheemsScapeService::new()
+    }
+
+    #[route("WhaleXPaceServices")]
+    pub fn whalexpace_service(&self) -> WhaleXPaceService {
+        WhaleXPaceService::new()
+    }
 }

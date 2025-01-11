@@ -9,16 +9,14 @@ use crate::states::state::{
     AcountInformation
 };
 
-const DECIMALS: u128 = 1_000_000_000_000_000_000;
+const DECIMALS: u128 = 1e12 as u128;
 const VALUE_OF_VIXELCOIN: u128 = 1000; // Suponiendo, por ejemplo, que un vara equivale a 1000 vixelcoins
 static mut VIXELCOIN_SYSTEM_STATE: Option<VixelCoinSystemState> = None;
 
 
 // Estado para el servicio de economía de vixel
 #[derive(Default)]
-pub struct VixelcoinSystemService{
-    
-}
+pub struct VixelcoinSystemService();
 
 // Servicio para manejar la economía de vixel
 #[sails_rs::service]
@@ -300,10 +298,6 @@ impl VixelcoinSystemService {
 
     pub fn see_vixelcoins_of_the_program(&self) -> VixelcoinSystemEvents{
         let state = self.state_mut();
-
-        if !state.amount_vixelcoins_total_in_the_system.is_none(){
-            return VixelcoinSystemEvents::Error(VixelCoinSystemErrors::StateNotInicializated);
-        }
 
         VixelcoinSystemEvents::SeeBalanceOfTheProgram { 
             vixelcoins: state.amount_vixelcoins_total_in_the_system.unwrap(), 
